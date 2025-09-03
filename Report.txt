@@ -1,0 +1,86 @@
+Report on Greedy and Simulated Annealing Methodologies
+
+1. Overview
+-------------
+We implemented a two‐phase heuristic for the Disaster Relief Helicopter Routing problem:
+  A. A value‐density greedy seed to quickly generate a feasible solution  
+  B. A Simulated Annealing (SA) refinement (with a small Tabu list) to improve the seed  
+
+2. Greedy Seed Methodology
+---------------------------
+2.1 Demand Tracking
+  - remFood[v] ← 9 × population of village v  
+  - remOther[v] ← 1 × population of village v  
+
+2.2 Per‐Helicopter Trip Construction
+For each helicopter h:
+  • Track usedDist (cumulative distance across trips), cannot exceed DMax.  
+  • While h can start a new trip (usedDist < DMax):
+    – Initialize a new Trip T with zero pickups and no drops.  
+    – curr ← home city coordinates.  
+    – Loop to add villages to T:
+        1. For each not‐yet‐fully‐served village i:
+           a) Compute d1 = dist(curr, i), d2 = dist(i, home).  
+           b) Check feasibility: 
+               • T.currentDist + d1 + d2 ≤ h.distance_capacity  
+               • usedDist + T.currentDist + d1 + d2 ≤ DMax  
+           c) Compute max possible load (P, D, O) given remaining weight capacity.  
+           d) Reject if no load possible.  
+           e) Score(i) = (population_i / (d1 + d2 + ε)) × (remFood[i] + remOther[i]) / (d1 + 1).  
+        2. Pick village bestV with highest Score. If none found, break.  
+        3. Compute actual loads: 
+           • Load Perishable up to min(remFood, weight cap)  
+           • Load Dry up to min(remFood−loadedPerish, weight cap)  
+           • Load Other up to min(remOther, weight cap)  
+        4. Update T: add Drop(bestV), increment T.dist by d1, T.weight by loaded weights.  
+        5. Subtract loads from remFood[bestV], remOther[bestV].  
+        6. curr ← coords(bestV).  
+    – If T has at least one drop, add return‐home leg, increment usedDist, push T into h’s plan; else stop.
+
+2.3 Key Points
+  - Multi‐stop greedy: chains multiple villages per trip until weight or range constraints bind.  
+  - Score blends population, remaining demand, and travel penalty.  
+  - Always prioritizes high marginal need per extra distance.
+
+3. Simulated Annealing Refinement
+---------------------------------
+3.1 State & Objective
+  - State = full Solution: each helicopter’s sequence of Trips and Drops.  
+  - Objective(sol) = ∑(delivered value to villages) – ∑(trip fixed cost + α·tripDistance).
+
+3.2 Initial Seed
+  - current = greedy seed  
+  - best = greedy seed, bestObj = computeObjective(best)
+
+3.3 Neighborhood Moves
+  Move types selected at random (uniform):
+   0. Swap: pick one helicopter h, one Trip t, swap two Drops within t.  
+   1. Relocate: remove one Drop from Trip t1 of h1, insert into t2 of h2 (or new trip).  
+   2. Load-mix tweak: select one Drop and convert 1 dry packet → 1 perishable (if capacity allows).
+
+3.4 Tabu List
+  - Fixed size = 100; stores recent Move descriptors to prevent immediate reversion.  
+  - A candidate move in tabu is skipped unless it improves the global best.
+
+3.5 Acceptance Criterion
+  - Δ = objective(cand) – objective(current)  
+  - Accept if Δ > 0 or exp(Δ / T) > random_uniform(0,1)
+
+3.6 Temperature Schedule
+  - T₀ = max(1, |bestObj|)  
+  - After each evaluated candidate: T ← 0.95 × T  
+  - Terminate when elapsed time ≥ min(problem.time_limit, 60s) or T < 1e-3.
+
+3.7 Efficiency Considerations
+  - Full feasibility check and objective recompute on two affected helicopters for each move.  
+  - Precomputed Euclidean distances to speed distance lookups.  
+  - Tabu prevents cycling; SA explores uphill moves early (due to high T) and gradually focuses.
+
+4. Potential Enhancements
+-------------------------
+  • Refine greedy scoring to include fixed cost F and α in the denominator.  
+  • Add a 2-opt local reordering on each Trip post-SA.  
+  • Incremental Δ evaluation: only recalc cost/value for affected trips to shave time.  
+  • Tweak cooling rate or stop after X consecutive rejections to better balance exploration.
+
+This two‐phase, greedy-plus-SA approach yields fast, feasible, and high-quality routes while respecting all capacity and range constraints within the 1-minute time
