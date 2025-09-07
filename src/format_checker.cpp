@@ -8,8 +8,8 @@
 #include <numeric>
 #include <algorithm>
 
-#include "src/structures.h"
-#include "src/io_handler.h"
+#include "structures.h"
+#include "io_handler.h"
 
 using namespace std;
 

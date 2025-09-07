@@ -5,7 +5,7 @@ CXX = g++
 CXXFLAGS = -std=c++17 -O2 -I src
 
 SRC = src/main.cpp src/io_handler.cpp src/solver.cpp
-FORMAT_SRC = format_checker.cpp src/io_handler.cpp
+FORMAT_SRC = src/format_checker.cpp src/io_handler.cpp
 
 MAIN = main
 FORMAT = format_checker
