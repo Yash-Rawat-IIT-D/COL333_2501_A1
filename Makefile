@@ -18,5 +18,7 @@ $(MAIN): $(SRC) src/structures.h src/solver.h src/io_handler.h
 $(FORMAT): $(FORMAT_SRC) src/structures.h src/io_handler.h
 	$(CXX) $(CXXFLAGS) $(FORMAT_SRC) -o $(FORMAT)
 
+checker: $(FORMAT)
+	
 clean:
 	rm -f $(MAIN) $(FORMAT)

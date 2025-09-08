@@ -12,14 +12,14 @@ echo "Running with param=$param"
 if [ "$param" -eq 1 ]; then
     for inp in "${inputs[@]}"; do
         out="tmp_out.txt"
-        ./main "$inp" "$out" >/dev/null 2>&1
+    ./main "$inp" "$out"
         score=$(./format_checker "$inp" "$out" | awk '/FINAL SCORE/ {print $3}')
         echo "$inp: $score"
     done
 elif [ "$param" -eq 2 ]; then
     for inp in SampleInputOutput/*.txt; do
         out="tmp_out.txt"
-        ./main "$inp" "$out" >/dev/null 2>&1
+    ./main "$inp" "$out"
         score=$(./format_checker "$inp" "$out" | awk '/FINAL SCORE/ {print $3}')
         echo "$inp: $score"
     done
