@@ -81,7 +81,6 @@ static double computeObjective(const ProblemData &problem, const Solution &sol)
 static bool isFeasible(const ProblemData &problem, const Solution &sol)
 {
     int H = problem.helicopters.size();
-    int V = problem.villages.size();
     // per-helicopter cumulative distance
     vector<double> cumDist(H, 0.0);
     for (int hi = 0; hi < H; ++hi)
@@ -193,9 +192,10 @@ Solution solve(const ProblemData &problem)
                     long loadO = min((long)floor((remW - wP - wD) / pkg[2].weight), (long)ceil(remOther[i]));
                     if (loadP + loadD + loadO == 0)
                         continue;
-                    // score: marginal need per extra distance
-                    double need = remFood[i] + remOther[i];
-                    double score = (problem.villages[i].population / ((d1 + d2) + 1e-6)) * need / (d1 + 1.0);
+                    // score: marginal value per marginal distance
+                    double deltaDist = d1 + d2;
+                    double deltaValue = loadP * pkg[1].value + loadD * pkg[0].value + loadO * pkg[2].value;
+                    double score = deltaValue / deltaDist;
                     if (score > bestScore)
                     {
                         bestScore = score;
@@ -254,7 +254,7 @@ Solution solve(const ProblemData &problem)
     double curObj = bestObj;
     double T = max(1.0, fabs(bestObj));
     auto start = chrono::steady_clock::now();
-    double timeLim = min(problem.time_limit_minutes * 60.0, 60.0);
+    double timeLim = problem.time_limit_minutes * 60.0;
     mt19937_64 rng(123456);
     uniform_real_distribution<double> unif(0.0, 1.0);
     int H = problem.helicopters.size();
@@ -272,9 +272,21 @@ Solution solve(const ProblemData &problem)
         do
         {
             cand = current;
-            int moveType = rng() % 3;
-            mv.type = moveType;
-            if (moveType == 0)
+            // weighted move selection: 0=swap, 1=move-drop, 2=duplicate-trip, 3=remove-empty, 4=add-drop, 5=split/merge
+            double r = unif(rng);
+            if (r < 0.05)
+                mv.type = 0;
+            else if (r < 0.3)
+                mv.type = 1;
+            else if (r < 0.5)
+                mv.type = 2;
+            else if (r < 0.6)
+                mv.type = 3;
+            else if (r < 0.8)
+                mv.type = 4;
+            else
+                mv.type = 5;
+            if (mv.type == 0)
             {
                 // swap two drops in a random trip
                 int hi = rng() % H;
@@ -291,7 +303,7 @@ Solution solve(const ProblemData &problem)
                     }
                 }
             }
-            else if (moveType == 1)
+            else if (mv.type == 1)
             {
                 // move a drop to another trip
                 // check for any trip with at least one drop; else fallback to swap
@@ -351,28 +363,123 @@ Solution solve(const ProblemData &problem)
                     }
                 }
             }
-            else
+            else if (mv.type == 2)
             {
-                // load-mix tweak in a random drop
+                // duplicate a random trip into a (possibly other) helicopter
+                int hi = rng() % H;
+                auto &trips1 = cand[hi].trips;
+                if (!trips1.empty())
+                {
+                    int ti = rng() % trips1.size();
+                    Trip copy = trips1[ti];
+                    int hj = rng() % H;
+                    cand[hj].trips.push_back(copy);
+                    mv.h1 = hi;
+                    mv.t1 = ti;
+                    mv.h2 = hj;
+                    mv.t2 = cand[hj].trips.size() - 1;
+                }
+            }
+            else if (mv.type == 3)
+            {
+                // remove an empty trip if any
                 int hi = rng() % H;
                 auto &trips = cand[hi].trips;
-                if (!trips.empty())
+                vector<int> empties;
+                for (int ti = 0; ti < (int)trips.size(); ++ti)
+                    if (trips[ti].drops.empty())
+                        empties.push_back(ti);
+                if (!empties.empty())
                 {
-                    int ti = rng() % trips.size();
-                    auto &drops = trips[ti].drops;
-                    if (!drops.empty())
+                    int idx = empties[rng() % empties.size()];
+                    trips.erase(trips.begin() + idx);
+                    mv.h1 = hi;
+                    mv.t1 = idx;
+                }
+            }
+            else if (mv.type == 4)
+            {
+                // add a minimal drop to a trip (1 perishable)
+                int hi = rng() % H;
+                auto &trips = cand[hi].trips;
+                int ti;
+                if (trips.empty())
+                {
+                    trips.emplace_back();
+                    ti = 0;
+                }
+                else
+                    ti = rng() % trips.size();
+                // create drop
+                Drop dp;
+                dp.village_id = problem.villages[rng() % V].id;
+                dp.perishable_food = 1;
+                dp.dry_food = 0;
+                dp.other_supplies = 0;
+                trips[ti].drops.push_back(dp);
+                trips[ti].perishable_food_pickup += 1;
+                mv.h1 = hi;
+                mv.t1 = ti;
+            }
+            else // mv.type == 5
+            {
+                // split or merge a trip
+                int hi = rng() % H;
+                auto &trips = cand[hi].trips;
+                if (!trips.empty() && unif(rng) < 0.5)
+                {
+                    // split a trip with >=2 drops
+                    vector<int> can;
+                    for (int ti = 0; ti < (int)trips.size(); ++ti)
+                        if (trips[ti].drops.size() >= 2)
+                            can.push_back(ti);
+                    if (!can.empty())
                     {
-                        int d = rng() % drops.size();
-                        auto &dp = drops[d];
-                        // move one dry->perishable if possible
-                        if (dp.dry_food > 0)
+                        int ti = can[rng() % can.size()];
+                        int n = trips[ti].drops.size();
+                        int split = 1 + rng() % (n - 1);
+                        Trip newt;
+                        newt.perishable_food_pickup = newt.dry_food_pickup = newt.other_supplies_pickup = 0;
+                        // move second half to new trip
+                        for (int i = split; i < n; ++i)
                         {
-                            dp.dry_food -= 1;
-                            dp.perishable_food += 1;
-                            trips[ti].dry_food_pickup -= 1;
-                            trips[ti].perishable_food_pickup += 1;
+                            auto dp = trips[ti].drops[i];
+                            newt.drops.push_back(dp);
+                            newt.perishable_food_pickup += dp.perishable_food;
+                            newt.dry_food_pickup += dp.dry_food;
+                            newt.other_supplies_pickup += dp.other_supplies;
                         }
+                        trips[ti].drops.erase(trips[ti].drops.begin() + split, trips[ti].drops.end());
+                        // adjust pickups of original
+                        trips[ti].perishable_food_pickup -= newt.perishable_food_pickup;
+                        trips[ti].dry_food_pickup -= newt.dry_food_pickup;
+                        trips[ti].other_supplies_pickup -= newt.other_supplies_pickup;
+                        trips.insert(trips.begin() + ti + 1, newt);
+                        mv.h1 = hi;
+                        mv.t1 = ti;
+                        mv.h2 = hi;
+                        mv.t2 = ti + 1;
                     }
+                }
+                else if (trips.size() >= 2)
+                {
+                    // merge two trips
+                    int i1 = rng() % trips.size();
+                    int i2 = rng() % trips.size();
+                    if (i1 == i2)
+                        i2 = (i1 + 1) % trips.size();
+                    int ti = min(i1, i2), tj = max(i1, i2);
+                    // append drops
+                    for (auto &dp : trips[tj].drops)
+                    {
+                        trips[ti].drops.push_back(dp);
+                        trips[ti].perishable_food_pickup += dp.perishable_food;
+                        trips[ti].dry_food_pickup += dp.dry_food;
+                        trips[ti].other_supplies_pickup += dp.other_supplies;
+                    }
+                    trips.erase(trips.begin() + tj);
+                    mv.h1 = hi;
+                    mv.t1 = ti;
                 }
             }
         } while (find(tabu.begin(), tabu.end(), mv) != tabu.end());
@@ -397,6 +504,34 @@ Solution solve(const ProblemData &problem)
             {
                 best = current;
                 bestObj = curObj;
+            }
+            // bulk convert dry -> perishable where possible
+            for (int hi = 0; hi < H; ++hi)
+            {
+                const auto &heli = problem.helicopters[hi];
+                double wcap = heli.weight_capacity;
+                for (auto &trip : current[hi].trips)
+                {
+                    // compute used weight
+                    double used = trip.dry_food_pickup * problem.packages[0].weight + trip.perishable_food_pickup * problem.packages[1].weight + trip.other_supplies_pickup * problem.packages[2].weight;
+                    double space = wcap - used;
+                    // each dry->perishable swap frees (w0-w1)
+                    double deltaW = problem.packages[0].weight - problem.packages[1].weight;
+                    if (deltaW <= 0)
+                        continue;
+                    for (auto &dp : trip.drops)
+                    {
+                        int canSwap = min(dp.dry_food,
+                                          (int)floor(space / deltaW));
+                        if (canSwap <= 0)
+                            continue;
+                        dp.dry_food -= canSwap;
+                        dp.perishable_food += canSwap;
+                        trip.dry_food_pickup -= canSwap;
+                        trip.perishable_food_pickup += canSwap;
+                        space -= canSwap * deltaW;
+                    }
+                }
             }
         }
         T *= 0.95;
